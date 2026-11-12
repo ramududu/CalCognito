@@ -1,4 +1,4 @@
-# Calculator (Android)
+# Calculator 
 
 A calculator app for Android, written in Kotlin. It has a basic and scientific mode, calculation history, and a hidden PIN-protected vault for private files having the option for SHA-256 encryption with built-in media player.
 
