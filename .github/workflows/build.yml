@@ -1,63 +1,79 @@
-name: Build and Release Android APK
+name: Build APK (with hidden-app engine)
 
 on:
   push:
-    branches: [ main, master ]
   pull_request:
   workflow_dispatch:
+    inputs:
+      rebuild_engine:
+        description: "Ignore the cached engine AAR and rebuild it from source"
+        type: boolean
+        default: false
 
-permissions:
-  contents: write   # needed to create a GitHub Release
+env:
+  # Bump this (v1 -> v2) to force a fresh engine build; the AAR is cached between runs because the native
+  # build is slow.
+  ENGINE_CACHE_VERSION: v1
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Unzip source
-        run: |
-          unzip -o CalculatorApp.zip -d extracted
-          mv extracted/CalculatorApp project
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Install required Android SDK packages
-        run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+      # Installs the Android SDK command-line tools and accepts the licences, so Gradle (AGP) can download the
+      # exact NDK / CMake / platform versions the engine and the app ask for.
+      - uses: android-actions/setup-android@v3
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Restore engine AAR cache
+        id: engine-cache
+        if: ${{ !inputs.rebuild_engine }}
+        uses: actions/cache@v4
         with:
-          gradle-version: 8.13
+          path: app/libs/blackbox-core.aar
+          key: engine-aar-${{ env.ENGINE_CACHE_VERSION }}-${{ hashFiles('scripts/build_engine.sh') }}
+
+      - name: Build the BlackBox engine AAR
+        if: ${{ steps.engine-cache.outputs.cache-hit != 'true' }}
+        run: |
+          chmod +x scripts/build_engine.sh
+          ./scripts/build_engine.sh
+
+      - name: Check the engine AAR is in place
+        run: |
+          ls -l app/libs
+          test -s app/libs/blackbox-core.aar
+
+      # Save the AAR even if the app build below fails, so it never has to be rebuilt from scratch.
+      - name: Save engine AAR cache
+        if: ${{ always() && steps.engine-cache.outputs.cache-hit != 'true' && hashFiles('app/libs/blackbox-core.aar') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: app/libs/blackbox-core.aar
+          key: engine-aar-${{ env.ENGINE_CACHE_VERSION }}-${{ hashFiles('scripts/build_engine.sh') }}
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
 
       - name: Build debug APK
-        working-directory: project
         run: gradle assembleDebug --stacktrace
 
-      - name: Rename APK
-        run: cp project/app/build/outputs/apk/debug/app-debug.apk Calculator.apk
-
-      - name: Upload APK as workflow artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: calculator-debug-apk
-          path: Calculator.apk
-          if-no-files-found: error
+          name: Calculator-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
 
-      - name: Publish GitHub Release
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "v1.0.${{ github.run_number }}" Calculator.apk \
-            --target "${{ github.sha }}" \
-            --title "Calculator v1.0.${{ github.run_number }}" \
-            --notes "Debug APK built automatically from commit ${{ github.sha }}."
+      # Download this once and commit it to app/libs/ if you also want to build the engine build locally in
+      # Android Studio without running the native build yourself.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blackbox-core-aar
+          path: app/libs/blackbox-core.aar
+          
