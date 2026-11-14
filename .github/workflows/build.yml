@@ -32,11 +32,13 @@ jobs:
           unzip -o CalculatorApp.zip -d extracted
           mv extracted/CalculatorApp project
 
-      - name: Set up JDK 17
+      # JDK 21: the engine's code is written for Java 21 (JDK 17 fails with "invalid source release: 21").
+      # The app itself still compiles for Java 17, which JDK 21 handles.
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       # The runner already has the Android SDK. Accepting the licences lets Gradle download whatever else the
       # engine and the app ask for (NDK, CMake, platforms).
