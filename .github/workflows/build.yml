@@ -26,10 +26,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed to tell which zip was committed last
 
+      # Browsers rename a second download to "CalculatorApp_1.zip" and so on. Build whichever CalculatorApp*.zip was
+      # committed most recently instead of insisting on one exact name, and say which one it was.
       - name: Unzip source
         run: |
-          unzip -o CalculatorApp.zip -d extracted
+          zip="$(git log --diff-filter=AM --name-only --format= -- 'CalculatorApp*.zip' | grep -m1 . || true)"
+          [ -n "$zip" ] || zip=CalculatorApp.zip
+          echo "Building from $zip (last changed in: $(git log -1 --format='%h %s' -- "$zip"))"
+          echo "Built from \`$zip\`" >> "$GITHUB_STEP_SUMMARY"
+          unzip -o "$zip" -d extracted
           mv extracted/CalculatorApp project
 
       # JDK 21: the engine's code is written for Java 21 (JDK 17 fails with "invalid source release: 21").
@@ -86,6 +94,16 @@ jobs:
 
       - name: Rename APK
         run: cp project/app/build/outputs/apk/debug/app-debug.apk Calculator.apk
+
+      # Fail the run unless the engine really is inside the APK, so an APK without it can never be released.
+      - name: Check the engine is inside the APK
+        run: |
+          if unzip -p Calculator.apk 'classes*.dex' | grep -aq 'top/niunaijun/blackbox/BlackBoxCore'; then
+            echo "Engine included: yes" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The engine classes are NOT in the APK" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
