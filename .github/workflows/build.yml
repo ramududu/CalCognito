@@ -17,7 +17,7 @@ permissions:
 env:
   # Bump v1 -> v2 to force a fresh engine build. The engine AAR is cached between runs because the native
   # build is slow.
-  ENGINE_CACHE_VERSION: v1
+  ENGINE_CACHE_VERSION: v3
 
 jobs:
   build:
@@ -61,8 +61,10 @@ jobs:
         if: ${{ !inputs.rebuild_engine }}
         uses: actions/cache@v4
         with:
-          path: project/app/libs/blackbox-core.aar
-          key: engine-aar-${{ env.ENGINE_CACHE_VERSION }}-${{ hashFiles('project/scripts/build_engine.sh') }}
+          path: |
+            project/app/libs/blackbox-core.aar
+            project/app/libs/engine-dep-*
+          key: engine-aar-${{ env.ENGINE_CACHE_VERSION }}-${{ hashFiles('project/scripts/*') }}
 
       - name: Build the hidden-app engine (BlackBox AAR)
         if: ${{ steps.engine-cache.outputs.cache-hit != 'true' }}
@@ -80,8 +82,10 @@ jobs:
         if: ${{ always() && steps.engine-cache.outputs.cache-hit != 'true' && hashFiles('project/app/libs/blackbox-core.aar') != '' }}
         uses: actions/cache/save@v4
         with:
-          path: project/app/libs/blackbox-core.aar
-          key: engine-aar-${{ env.ENGINE_CACHE_VERSION }}-${{ hashFiles('project/scripts/build_engine.sh') }}
+          path: |
+            project/app/libs/blackbox-core.aar
+            project/app/libs/engine-dep-*
+          key: engine-aar-${{ env.ENGINE_CACHE_VERSION }}-${{ hashFiles('project/scripts/*') }}
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -104,6 +108,13 @@ jobs:
             echo "The engine classes are NOT in the APK" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+          # The engine crashes at start-up without its libraries (this is the NoClassDefFoundError seen in the app).
+          if unzip -p Calculator.apk 'classes*.dex' | grep -aq 'top/niunaijun/blackreflection/BlackReflection'; then
+            echo "Engine libraries (BlackReflection) included: yes" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "BlackReflection is NOT in the APK: the engine would fail to start" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
@@ -116,7 +127,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: blackbox-core-aar
-          path: project/app/libs/blackbox-core.aar
+          path: |
+            project/app/libs/*.aar
+            project/app/libs/*.jar
           if-no-files-found: warn
 
       - name: Publish GitHub Release
